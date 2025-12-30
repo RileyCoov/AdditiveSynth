@@ -1,0 +1,109 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Scheme
+   LastUpgradeVersion = "1620"
+   version = "1.7">
+   <BuildAction
+      parallelizeBuildables = "YES"
+      buildImplicitDependencies = "YES"
+      buildArchitectures = "Automatic">
+      <BuildActionEntries>
+         <BuildActionEntry
+            buildForTesting = "YES"
+            buildForRunning = "YES"
+            buildForProfiling = "YES"
+            buildForArchiving = "YES"
+            buildForAnalyzing = "YES">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "BFF75C6D2D43707B00CF472F"
+               BuildableName = "AdditiveSynthClean"
+               BlueprintName = "AdditiveSynthClean"
+               ReferencedContainer = "container:AdditiveSynthClean.xcodeproj">
+            </BuildableReference>
+         </BuildActionEntry>
+      </BuildActionEntries>
+   </BuildAction>
+   <TestAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      shouldUseLaunchSchemeArgsEnv = "YES"
+      shouldAutocreateTestPlan = "YES">
+   </TestAction>
+   <LaunchAction
+      buildConfiguration = "Debug"
+      selectedDebuggerIdentifier = "Xcode.DebuggerFoundation.Debugger.LLDB"
+      selectedLauncherIdentifier = "Xcode.DebuggerFoundation.Launcher.LLDB"
+      launchStyle = "0"
+      useCustomWorkingDirectory = "NO"
+      ignoresPersistentStateOnLaunch = "NO"
+      debugDocumentVersioning = "YES"
+      debugServiceExtension = "internal"
+      allowLocationSimulation = "YES"
+      viewDebuggingEnabled = "No">
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "BFF75C6D2D43707B00CF472F"
+            BuildableName = "AdditiveSynthClean"
+            BlueprintName = "AdditiveSynthClean"
+            ReferencedContainer = "container:AdditiveSynthClean.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+      <CommandLineArguments>
+         <CommandLineArgument
+            argument = "/Users/Riley/Desktop/AdditiveSongs/AdditiveInputs/breath.wav /Users/Riley/Desktop/AdditiveSongs/AdditiveOutputs/TAKETWO5th-breath.wav 16"
+            isEnabled = "NO">
+         </CommandLineArgument>
+         <CommandLineArgument
+            argument = "/Users/Riley/Desktop/AddtiveSounds/Piano48K.wav /Users/Riley/Desktop/AddtiveSounds/COutputs/TestPiano48K.wav 16"
+            isEnabled = "NO">
+         </CommandLineArgument>
+         <CommandLineArgument
+            argument = "/Users/Riley/Desktop/AdditiveSongs/AdditiveInputs/take-me-out.wav /Users/Riley/Desktop/FinalOutputs/backtoNormal/take-me-out.wav 16"
+            isEnabled = "NO">
+         </CommandLineArgument>
+         <CommandLineArgument
+            argument = "/Users/Riley/Desktop/AdditiveSongs/AdditiveInputs/1985.wav /Users/Riley/Desktop/FinalOutputs/backtoNormal/1985.wav 16"
+            isEnabled = "NO">
+         </CommandLineArgument>
+         <CommandLineArgument
+            argument = "/Users/Riley/Desktop/AddtiveSounds/PianoSampleMono.wav /Users/Riley/Desktop/AddtiveSounds/COutputs/PianoSampleMono.wav 16"
+            isEnabled = "YES">
+         </CommandLineArgument>
+         <CommandLineArgument
+            argument = "/Users/Riley/Desktop/AdditiveSongs/AdditiveInputs/breath.wav /Users/Riley/Desktop/FinalOutputs/backtoNormal/breath.wav 16"
+            isEnabled = "NO">
+         </CommandLineArgument>
+         <CommandLineArgument
+            argument = "/Users/Riley/Desktop/AddtiveSounds/DrumLoopShort.wav /Users/Riley/Desktop/AddtiveSounds/COutputs/BACKDrumLoopShortADDITIVE.wav 16"
+            isEnabled = "NO">
+         </CommandLineArgument>
+      </CommandLineArguments>
+   </LaunchAction>
+   <ProfileAction
+      buildConfiguration = "Release"
+      shouldUseLaunchSchemeArgsEnv = "YES"
+      savedToolIdentifier = ""
+      useCustomWorkingDirectory = "NO"
+      debugDocumentVersioning = "YES">
+      <BuildableProductRunnable
+         runnableDebuggingMode = "0">
+         <BuildableReference
+            BuildableIdentifier = "primary"
+            BlueprintIdentifier = "BFF75C6D2D43707B00CF472F"
+            BuildableName = "AdditiveSynthClean"
+            BlueprintName = "AdditiveSynthClean"
+            ReferencedContainer = "container:AdditiveSynthClean.xcodeproj">
+         </BuildableReference>
+      </BuildableProductRunnable>
+   </ProfileAction>
+   <AnalyzeAction
+      buildConfiguration = "Debug">
+   </AnalyzeAction>
+   <ArchiveAction
+      buildConfiguration = "Release"
+      revealArchiveInOrganizer = "YES">
+   </ArchiveAction>
+</Scheme>
