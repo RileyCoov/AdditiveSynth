@@ -34,6 +34,37 @@ int SHORT_SIZE = 256;
 const double PI = 3.14159265358979323846;
 
 
+static double windowSum(const std::vector<float>& w) {
+    double s = 0.0;
+    for (float x : w) s += x;
+    return s;
+}
+
+// Rough sinusoid amplitude estimate from bin magnitude
+static double magToAmp(double binMag, const std::vector<float>& window) {
+    double s = windowSum(window);
+    return (s > 0.0) ? (2.0 * binMag / s) : 0.0;
+}
+
+
+static std::complex<double> demodAtFreq(
+    const std::vector<float>& x,
+    int start,
+    int N,
+    const std::vector<float>& w,
+    double freqHz,
+    int sr
+){
+    std::complex<double> acc(0.0, 0.0);
+    double omega = 2.0 * M_PI * freqHz / (double)sr;
+    for (int n = 0; n < N; n++) {
+        double ang = -omega * n;
+        std::complex<double> ej(cos(ang), sin(ang));
+        acc += (double)x[start + n] * (double)w[n] * ej;
+    }
+    return acc;
+}
+
 
 /**
  * Definition of all the windows being used in the file right here
@@ -88,28 +119,6 @@ std::vector<std::vector<float>> audioBufferToVector(const AudioBuffer& buff)
     }
     return audioData;
 }
-
-/**
- *These are the contents saved frame by frame for the audio signal. During
- *implemenation thrown into "active_peaks" which holds onto the contents of
- *importance frame by frame, and all collected in a vector<vector<active_peaks>>
- */
-/*
- class PeakTrack {
- public:
-     int id;
-     double freq_hz;
-     double max_db;
-     double current_db;
-     int peak_bin;
-     double phase;
-     bool alive;
-     bool edit;
-     
-     PeakTrack(int _id, double _freq, double _mag, int _peak_bin, double _phase) : id(_id), freq_hz(_freq), max_db(_mag), current_db(_mag), peak_bin(_peak_bin), phase(_phase), alive(true), edit(true) {}
- };
- */
-
 
 /**
 *tracks the transients, we compare previous frame with the current frame and
@@ -274,7 +283,8 @@ vector<float> transientNegotiationTactics(int num_frames, float transientThresho
         MagnitudeFFTVec(mTD.mCurrentFrame);
         for (int j=1; j<halfFFTSize; j++)
         {
-            float diff = 20.0f * (log10(mTD.mCurrentFrame[j]) -  log10(mTD.mPrevFrame[j]));
+            const float eps = 1e-12f;
+            float diff = 20.0f * (log10(mTD.mCurrentFrame[j] + eps) - log10(mTD.mPrevFrame[j] + eps));
             if (diff >= 0.0f)
                 transientList[f] += diff;
         }
@@ -375,123 +385,122 @@ int main(int argc, const char * argv[]) {
     vector<vector<PeakTrack>> frames_peaks;
     int printCoutner = 1;
     for (int frame_idx = 0; frame_idx < num_frames; frame_idx++) {
+
+        // CHANGED: bring this in early so we can use the correct analysis/synthesis window sum
+        SynthInformation current_information = containsSynthPlacement[frame_idx];
+        const auto& frameWindow = current_information.windowApplied;  // used for conversions/demod
+        const int frameStart = current_information.start;
+
+        // spec[frame_idx] holds complex spectrum from STFTAdjustment
         vector<complex<double>> frameGuy = spec[frame_idx];
-        frame_size = frameGuy.size()*2;
+        int frame_size = (int)frameGuy.size() * 2;
         bool is_long_window = (frame_size == LONG_SIZE);
+
         vector<double> mag_spec(frame_size/2, 0.0);
         vector<double> phase_spec(frame_size/2, 0.0);
-        
+
         for (int k = 0; k < frame_size/2; k++) {
-            mag_spec[k] = abs(spec[frame_idx][k]);
-            //arg calcualtes the phase angle
-            phase_spec[k] = arg(spec[frame_idx][k]);
+            mag_spec[k] = std::abs(spec[frame_idx][k]);   // FFT-bin magnitude
+            phase_spec[k] = std::arg(spec[frame_idx][k]); // bin phase
         }
-        //We only care about new content from teh long window
-        //Shorter windows will be updated based on the information gathered from previous
-        //Frames
+
+        // ----------------------------------------------------
+        // A) Create/update tracks from LONG frames only
+        // ----------------------------------------------------
         if (is_long_window) {
             vector<int> peaks = detect_peaks(mag_spec, threshold);
-            vector<double> freqs, mags;
-            if (peaks.size() > 0) {
-                parabolic_interpolation(mag_spec, peaks, freqs, mags);
-                
-                vector<double> phases;
-                for (int i : peaks) {
-                    phases.push_back(phase_spec[i]);
-                }
-                
-                vector<double> freqs_hz(freqs.size(), 0.0);
-                for (size_t i = 0; i < freqs.size(); i++) {
-                    freqs_hz[i] = freqs[i] * ((double)sr / (double)frame_size);
-                }
-                
+
+            if (!peaks.empty()) {
+                vector<double> peakBinsFrac, peakBinMags; // NOTE: peakBinMags is still "bin magnitude"
+                parabolic_interpolation(mag_spec, peaks, peakBinsFrac, peakBinMags);
+
                 for (size_t i = 0; i < peaks.size(); i++) {
-                    double f_hz = freqs_hz[i];
-                    double m_db = mags[i];
-                    int p_bin = peaks[i];
-                    double ph = phases[i];
-                    
-                    double peak_tol = (p_bin >= 5) ? 2.0 : 1.0;
+                    const int    p_bin = peaks[i];
+                    const double binFrac = peakBinsFrac[i];
+
+                    // freq estimate (Hz) from fractional bin
+                    const double f_hz = binFrac * ((double)sr / (double)frame_size);
+
+                    // CHANGED: rename to reflect it's NOT dB
+                    const double binMag = peakBinMags[i];
+
+                    // CHANGED: convert bin magnitude -> amplitude immediately
+                    const double amp = magToAmp(binMag, frameWindow);
+
+                    // phase: you’re using bin phase (OK for long window peaks)
+                    const double ph = phase_spec[p_bin];
+
+                    const double peak_tol = (p_bin >= 5) ? 2.0 : 1.0;
                     int match_idx = find_best_match_peak(p_bin, active_peaks, peak_tol);
+
                     if (match_idx != -1) {
-                        if (m_db > active_peaks[match_idx].current_db) {
-                            active_peaks[match_idx].freq_hz = f_hz;
-                            active_peaks[match_idx].current_db = m_db;
-                            active_peaks[match_idx].peak_bin = p_bin;
-                            active_peaks[match_idx].phase = ph;
-                            active_peaks[match_idx].edit = true;
-                            if (m_db > active_peaks[match_idx].max_db) {
-                                active_peaks[match_idx].max_db = m_db;
-                            }
-                            double thresholdDB = threshold_factor * active_peaks[match_idx].max_db;
-                            if (m_db < thresholdDB) {
-                                active_peaks[match_idx].alive = false;
-                            }
-                        }
+                        auto& tr = active_peaks[match_idx];
+
+                        // CHANGED: always update (don’t gate on amp rising)
+                        tr.freq_hz  = f_hz;
+                        tr.peak_bin = p_bin;
+                        tr.phase    = ph;
+                        tr.edit     = true;
+
+                        // CHANGED: smooth AMPLITUDE (not bin mag)
+                        const double a = 0.3;
+                        tr.current_db = (1.0 - a) * tr.current_db + a * amp;
+
+                        // CHANGED: max_db tracks max AMPLITUDE
+                        tr.max_db = std::max(tr.max_db, tr.current_db);
+
+                        const double thresholdAmp = threshold_factor * tr.max_db;
+                        if (tr.current_db < thresholdAmp) tr.alive = false;
+
                     } else {
-                        PeakTrack newPeak(peak_id_counter, f_hz, m_db, p_bin, ph);
+                        // CHANGED: new tracks store amplitude
+                        PeakTrack newPeak(peak_id_counter, f_hz, amp, p_bin, ph);
                         peak_id_counter++;
                         active_peaks.push_back(newPeak);
                     }
                 }
             }
         }
-        
-        for (auto &ap : active_peaks) {
+
+        // ----------------------------------------------------
+        // B) Update tracks on frames where they were NOT edited
+        //    (SHORT frames and also LONG frames with no matching peaks)
+        // ----------------------------------------------------
+        for (auto& ap : active_peaks) {
             if (ap.alive && !ap.edit) {
-                double scaled_bin;
-                if (is_long_window) {
-                    scaled_bin = ap.peak_bin;
-                } else {
-                    scaled_bin = ap.peak_bin * (double)SHORT_SIZE / LONG_SIZE;
-                }
-                if (scaled_bin >= 0 && scaled_bin < (int)mag_spec.size() - 1) {
-                    double true_freq, true_mag;
-                    //single_parabolic_interpolation(mag_spec, scaled_bin, true_freq, true_mag);
-                    true_mag = mag_spec[scaled_bin];
-                    ap.current_db = true_mag;
-                    //ap.freq_hz = (true_freq == -1.0) ? ap.freq_hz : true_freq * ((double)sr / (double)frame_size);
-                    ap.phase = interpolate_phase(phase_spec, scaled_bin);
-                    
-                    if (true_mag > ap.max_db) {
-                        ap.max_db = true_mag;
-                    }
-                    double thresholdDB = threshold_factor * ap.max_db;
-                    if (true_mag < thresholdDB) {
-                        ap.alive = false;
-                    }
-                } else {
-                    ap.alive = false;
-                }
+
+                // CHANGED: update amp + phase by DEMOD at ap.freq_hz.
+                // This is the key fix that prevents short-window bin-phase warble on bass.
+                // It also keeps units consistent: current_db remains amplitude.
+                auto C = demodAtFreq(singleChannelData, frameStart, frame_size, frameWindow, ap.freq_hz, sr);
+                const double ampNew = (2.0 * std::abs(C)) / (windowSum(frameWindow) + 1e-12);
+                const double phNew  = std::arg(C);
+
+                // Optional smoothing for stability
+                const double b = 0.3;
+                ap.current_db = (1.0 - b) * ap.current_db + b * ampNew;
+                ap.phase = phNew;
+
+                // CHANGED: max_db + alive threshold in amplitude units
+                ap.max_db = std::max(ap.max_db, ap.current_db);
+                const double thresholdAmp = threshold_factor * ap.max_db;
+                if (ap.current_db < thresholdAmp) ap.alive = false;
             }
+
             ap.edit = false;
         }
-        
-        //Remove the unalive
+
+        // remove dead
         {
             vector<PeakTrack> temp;
-            for (auto &p : active_peaks) {
-                if (p.alive) temp.push_back(p);
-            }
+            temp.reserve(active_peaks.size());
+            for (auto& p : active_peaks) if (p.alive) temp.push_back(p);
             active_peaks.swap(temp);
         }
-        vector<PeakTrack> frame_info;
-        for (auto &ap : active_peaks) {
-            frame_info.push_back(ap);
-        }
-        printCoutner++;
-        frames_peaks.push_back(frame_info);
-        
-        
+
+        // snapshot for synthesis
+        frames_peaks.push_back(active_peaks);
     }
-    //Here is trying to save the file to filename rather than writing it out
-    string fileSave = "/Users/Riley/Desktop/479SineOut.bin";
-    save_binary(fileSave, num_frames, containsSynthPlacement, frames_peaks);
-    string fila = "/Users/Riley/Desktop/479SineOut.bin";
-    int frame_nums = 18;
-    vector<SynthInformation> placement;
-    vector<vector<PeakTrack>> framess;
-    read_binary(fila, frame_nums, placement, framess);
     
     
     
@@ -500,106 +509,99 @@ int main(int argc, const char * argv[]) {
     //This code will apply the shift if frequncy if given by the user
     frame_size = LONG_SIZE;
     float total_length = (float)lengthYouNeed;
-    vector<float> synthesized_signal(total_length, 0.0f);
-    
-    
-    vector<float> frame_signal(LONG_SIZE, 0.0f);
-    vector<float> frame_signal_short(SHORT_SIZE, 0.0f);
     
     bool shorter = false;
     appliedShort = false;
     double nyquist = 48000.0 / 2.0;
     bool skip = false;
     
-    //std::unordered_map<int, double> prevPhase;
-    //vector<int> chordIntervals = {0, 4, 7};
+    vector<float> synthesized_signal((size_t)lengthYouNeed, 0.0f);
+    vector<float> frame_signal(LONG_SIZE, 0.0f);
+    vector<float> frame_signal_short(SHORT_SIZE, 0.0f);
     vector<int> chordIntervals = {0};
     std::unordered_map<int, std::unordered_map<int, double>> prevPhaseChord;
     
     for (int frame_idx = 0; frame_idx < num_frames; frame_idx++) {
+
         SynthInformation current_information = containsSynthPlacement[frame_idx];
-        int frame_size = current_information.size;
-        int hop = current_information.hop_size;
-        fill(frame_signal.begin(), frame_signal.end(), 0.0f);
-        fill(frame_signal_short.begin(), frame_signal_short.end(), 0.0f);
-        for (auto &peak : frames_peaks[frame_idx]) {
-            skip = false;
-            double freq = peak.freq_hz;
-            double mag = peak.current_db;
-            double phase = peak.phase;
-            int identification = peak.id;
-            
+        const int frame_size = current_information.size;
+        const int hop = current_information.hop_size;
+        const int start = current_information.start;
+        int end = current_information.stop;
+        if (end > (int)synthesized_signal.size()) end = (int)synthesized_signal.size();
+
+        std::fill(frame_signal.begin(), frame_signal.end(), 0.0f);
+        std::fill(frame_signal_short.begin(), frame_signal_short.end(), 0.0f);
+
+        for (auto& peak : frames_peaks[frame_idx]) {
+            const double freq = peak.freq_hz;
+
+            // CHANGED: current_db is already AMPLITUDE. Do NOT convert it again.
+            const double amp = peak.current_db;
+
+            const double phase0 = peak.phase;
+            const int identification = peak.id;
+
             for (int interval : chordIntervals) {
-                double chordShiftFactor = pow(2.0, interval / 12.0);
-                double chordShiftedFreq = freq * chordShiftFactor;
-                
-                if (chordShiftedFreq >= nyquist) {
-                    continue;
-                }
-                double chordAdjustedPhase = 0.0;
-                
+                const double chordShiftFactor = pow(2.0, interval / 12.0);
+                const double chordFreq = freq * chordShiftFactor;
+                if (chordFreq >= (sr * 0.5)) continue;
+
+                double chordPhase;
                 if (frame_idx == 0) {
-                    chordAdjustedPhase = phase;
-                    prevPhaseChord[identification][interval] = phase;
+                    chordPhase = phase0;
+                    prevPhaseChord[identification][interval] = chordPhase;
                 } else {
-                    double delta_psi = 2 * M_PI * chordShiftedFreq * (hop) / sr;
-                    chordAdjustedPhase = prevPhaseChord[identification][interval] + delta_psi;
-                    prevPhaseChord[identification][interval] = chordAdjustedPhase;
+                    // phase advance uses hop; this is why your AnalysisInfo.cpp hop fixes matter
+                    const double delta = 2.0 * M_PI * chordFreq * (double)hop / (double)sr;
+                    chordPhase = prevPhaseChord[identification][interval] + delta;
+                    prevPhaseChord[identification][interval] = chordPhase;
                 }
-                chordAdjustedPhase = fmod(chordAdjustedPhase, 2 * M_PI);
-                
+
+                // synth with phase accumulator
+                double phase = fmod(chordPhase, 2.0 * M_PI);
+                const double dphi = 2.0 * M_PI * chordFreq / (double)sr;
+
                 if (frame_size == LONG_SIZE) {
                     for (int n = 0; n < frame_size; n++) {
-                        double t = static_cast<double>(n) / sr;
-                        frame_signal[n] += static_cast<float>(mag * cos(2.0 * M_PI * chordShiftedFreq * t + chordAdjustedPhase));
+                        frame_signal[n] += (float)(amp * cos(phase));
+                        phase += dphi;
+                        if (phase >  M_PI) phase -= 2.0*M_PI;
+                        if (phase < -M_PI) phase += 2.0*M_PI;
                     }
-                    shorter = false;
                 } else {
                     for (int n = 0; n < frame_size; n++) {
-                        double t = static_cast<double>(n) / sr;
-                        frame_signal_short[n] += static_cast<float>(mag * cos(2.0 * M_PI * chordShiftedFreq * t + chordAdjustedPhase));
+                        frame_signal_short[n] += (float)(amp * cos(phase));
+                        phase += dphi;
+                        if (phase >  M_PI) phase -= 2.0*M_PI;
+                        if (phase < -M_PI) phase += 2.0*M_PI;
                     }
-                    shorter = true;
                 }
             }
         }
+
+        // windowing (unchanged)
         if (frame_idx == 0 && !current_information.trans) {
-            if (shorter) {
-                for (int i = 0; i < frame_size; i++) {
-                    frame_signal_short[i] *= rect_fade_to_hann_short[i];
-                }
+            if (frame_size == SHORT_SIZE) {
+                for (int i = 0; i < frame_size; i++) frame_signal_short[i] *= rect_fade_to_hann_short[i];
             } else {
-                for (int i = 0; i < frame_size; i++) {
-                    frame_signal[i] *= rect_fade_to_hann[i];
-                }
+                for (int i = 0; i < frame_size; i++) frame_signal[i] *= rect_fade_to_hann[i];
             }
         } else {
-            vector<float> window_used = current_information.windowApplied;
+            const auto& w = current_information.windowApplied;
             if (frame_size == LONG_SIZE) {
-                for (int i = 0; i < frame_size; i++) {
-                    frame_signal[i] *= window_used[i];
-                }
+                for (int i = 0; i < frame_size; i++) frame_signal[i] *= w[i];
             } else {
-                for (int i = 0; i < frame_size; i++) {
-                    frame_signal_short[i] *= window_used[i];
-                }
+                for (int i = 0; i < frame_size; i++) frame_signal_short[i] *= w[i];
             }
         }
-        int start = current_information.start;
-        int end = current_information.stop;
-        if (end > (int)synthesized_signal.size()) {
-            end = (int)synthesized_signal.size();
-        }
+
+        // overlap-add (unchanged)
         if (frame_size == LONG_SIZE) {
-            for (int i = start; i < end; i++) {
-                synthesized_signal[i] += frame_signal[i-start];
-            }
+            for (int i = start; i < end; i++) synthesized_signal[i] += frame_signal[i - start];
         } else {
-            for (int i = start; i < end; i++) {
-                synthesized_signal[i] += frame_signal_short[i-start];
-            }
+            for (int i = start; i < end; i++) synthesized_signal[i] += frame_signal_short[i - start];
         }
-        //cout << "Frame Number: " << frame_idx << ",  This is the starting point: " << start << " and this is the ending spot: " << end << endl;
     }
     
      float max_val = 0.0f;

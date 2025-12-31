@@ -28,7 +28,7 @@ void STFTAdjustment::processFrames(int num_frames, const vector<float> &audioDat
                 if (transientList[f] == 0.0f && transientList[f+1] != 0.0f) {
                     // Transition from long to short
                     applyAndProcessWindow(audioData, f * hopSize, longToShortWindow, m_longSize, m_readjustedSTFT,f);
-                    SynthInformation hold = SynthInformation(f*hopSize, (f*hopSize)+m_longSize, m_longSize, longToShortWindow, true, movementBuffer); //long_to_short
+                    SynthInformation hold = SynthInformation(f*hopSize, (f*hopSize)+m_longSize, m_longSize, longToShortWindow, true, m_longSize/2); //long_to_short
                     m_synthPlacement.push_back(hold);
                     appliedShort = true;
                 }
@@ -53,7 +53,7 @@ void STFTAdjustment::processFrames(int num_frames, const vector<float> &audioDat
                 m_synthPlacement.push_back(hold);
             } else {
                 applyAndProcessWindow(audioData, f * hopSize, shortToLongWindow, m_longSize, m_readjustedSTFT, f);
-                SynthInformation hold = SynthInformation(f*hopSize, (f*hopSize)+m_longSize, m_longSize, shortToLongWindow, true, m_shortSize/2); //short_to_long
+                SynthInformation hold = SynthInformation(f*hopSize, (f*hopSize)+m_longSize, m_longSize, shortToLongWindow, true, m_longSize/2); //short_to_long
                 m_synthPlacement.push_back(hold);
             }
             appliedShort = false;
