@@ -420,15 +420,18 @@ int main(int argc, const char * argv[]) {
 
                     // freq estimate (Hz) from fractional bin
                     const double f_hz = binFrac * ((double)sr / (double)frame_size);
+                    auto C = demodAtFreq(singleChannelData, frameStart, frame_size, frameWindow, f_hz, sr);
 
                     // CHANGED: rename to reflect it's NOT dB
                     const double binMag = peakBinMags[i];
 
                     // CHANGED: convert bin magnitude -> amplitude immediately
-                    const double amp = magToAmp(binMag, frameWindow);
+                    //const double amp = magToAmp(binMag, frameWindow);
+                    const double amp = (2.0 * std::abs(C)) / (windowSum(frameWindow) + 1e-12);
 
                     // phase: you’re using bin phase (OK for long window peaks)
-                    const double ph = phase_spec[p_bin];
+                    //const double ph = phase_spec[p_bin];
+                    const double ph  = std::arg(C);
 
                     const double peak_tol = (p_bin >= 5) ? 2.0 : 1.0;
                     int match_idx = find_best_match_peak(p_bin, active_peaks, peak_tol);
@@ -516,10 +519,136 @@ int main(int argc, const char * argv[]) {
     bool skip = false;
     
     vector<float> synthesized_signal((size_t)lengthYouNeed, 0.0f);
+    vector<float> windowSummation((size_t)lengthYouNeed, 0.0f);
+    vector<float> ampTotal((size_t)lengthYouNeed, 0.0f);
+    vector<float> frame_signal2(LONG_SIZE, 1.0f);
+    vector<float> frame_signal_short2(SHORT_SIZE, 1.0f);
+    
+    vector<float> frame_signal3(LONG_SIZE, 0.0f);
+    vector<float> frame_signal_short3(SHORT_SIZE, 0.0f);
+    
     vector<float> frame_signal(LONG_SIZE, 0.0f);
     vector<float> frame_signal_short(SHORT_SIZE, 0.0f);
     vector<int> chordIntervals = {0};
     std::unordered_map<int, std::unordered_map<int, double>> prevPhaseChord;
+    double windowSumTotal = 0.0;
+    double ampSumTotal = 0.0;
+    double windowSqSumTotal = 0.0;
+    double ampSqSumTotal = 0.0;
+    
+    
+    for (int frame_idx = 0; frame_idx < num_frames; frame_idx++) {
+
+        SynthInformation current_information = containsSynthPlacement[frame_idx];
+        const int frame_size = current_information.size;
+        const int hop = current_information.hop_size;
+        const int start = current_information.start;
+        int end = current_information.stop;
+        if (end > (int)synthesized_signal.size()) end = (int)synthesized_signal.size();
+
+        std::fill(frame_signal3.begin(), frame_signal3.end(), 0.0f);
+        std::fill(frame_signal_short3.begin(), frame_signal_short3.end(), 0.0f);
+        std::fill(frame_signal2.begin(), frame_signal2.end(), 1.0f);
+        std::fill(frame_signal_short2.begin(), frame_signal_short2.end(), 1.0f);
+        
+        for (auto& peak : frames_peaks[frame_idx]) {
+            const double amp = peak.current_db;
+
+            const double phase0 = peak.phase;
+            const int identification = peak.id;
+
+            for (int interval : chordIntervals) {
+                if (frame_size == LONG_SIZE) {
+                    for (int n = 0; n < frame_size; n++) {
+                        frame_signal3[n] += (float)(amp * 1);
+                    }
+                } else {
+                    for (int n = 0; n < frame_size; n++) {
+                        frame_signal_short3[n] += (float)(amp * 1);
+                    }
+                }
+            }
+        }
+        
+        
+
+        if (frame_idx == 0 && !current_information.trans) {
+            if (frame_size == SHORT_SIZE) {
+                for (int i = 0; i < frame_size; i++) frame_signal_short2[i] *= rect_fade_to_hann_short[i];
+            } else {
+                for (int i = 0; i < frame_size; i++) frame_signal2[i] *= rect_fade_to_hann[i];
+            }
+        } else {
+            const auto& w = current_information.windowApplied;
+            if (frame_size == LONG_SIZE) {
+                for (int i = 0; i < frame_size; i++) frame_signal2[i] *= w[i];
+            } else {
+                for (int i = 0; i < frame_size; i++) frame_signal_short2[i] *= w[i];
+            }
+        }
+
+        // overlap-add (unchanged)
+        if (frame_size == LONG_SIZE) {
+            for (int i = start; i < end; i++) {
+                //ampTotal[i] += frame_signal3[i - start];
+                //windowSummation[i] += frame_signal2[i - start];
+                float w = frame_signal2[i - start];
+                float a = frame_signal3[i - start];
+
+                windowSummation[i] += w;
+                ampTotal[i] += a;
+
+                windowSumTotal += w;
+                ampSumTotal += a;
+                windowSqSumTotal += w * w;
+                ampSqSumTotal += a * a;
+            }
+        } else {
+            for (int i = start; i < end; i++) {
+                //ampTotal[i] += frame_signal_short3[i - start];
+                //windowSummation[i] += frame_signal_short2[i - start];
+                float w = frame_signal_short2[i - start];
+                float a = frame_signal_short3[i - start];
+
+                windowSummation[i] += w;
+                ampTotal[i] += a;
+
+                windowSumTotal += w;
+                ampSumTotal += a;
+                windowSqSumTotal += w * w;
+                ampSqSumTotal += a * a;
+            }
+        }
+    }
+    
+    
+    double N = (double)lengthYouNeed;
+
+    cout << "==== Window / Amp Summary ====" << endl;
+    cout << "Window sum total: " << windowSumTotal << endl;
+    cout << "Amp sum total:    " << ampSumTotal << endl;
+    cout << "Window mean:      " << windowSumTotal / N << endl;
+    cout << "Amp mean:         " << ampSumTotal / N << endl;
+    cout << "Window RMS:       " << sqrt(windowSqSumTotal / N) << endl;
+    cout << "Amp RMS:          " << sqrt(ampSqSumTotal / N) << endl;
+    
+    double wMin = 1e9, wMax = -1e9, wMean = 0.0;
+    for (int i = 0; i < lengthYouNeed; i++) {
+        double w = windowSummation[i];
+        wMin = std::min(wMin, w);
+        wMax = std::max(wMax, w);
+        wMean += w;
+    }
+    wMean /= (double)lengthYouNeed;
+
+    double maxErr = 0.0;
+    for (int i = 0; i < lengthYouNeed; i++) {
+        maxErr = std::max(maxErr, std::abs((double)windowSummation[i] - 1.0));
+    }
+
+    cout << "COLA check windowSummation:\n";
+    cout << "  min=" << wMin << " max=" << wMax << " mean=" << wMean << "\n";
+    cout << "  max|wSum-1| = " << maxErr << "\n";
     
     for (int frame_idx = 0; frame_idx < num_frames; frame_idx++) {
 
@@ -548,6 +677,7 @@ int main(int argc, const char * argv[]) {
                 if (chordFreq >= (sr * 0.5)) continue;
 
                 double chordPhase;
+                /*
                 if (frame_idx == 0) {
                     chordPhase = phase0;
                     prevPhaseChord[identification][interval] = chordPhase;
@@ -557,11 +687,20 @@ int main(int argc, const char * argv[]) {
                     chordPhase = prevPhaseChord[identification][interval] + delta;
                     prevPhaseChord[identification][interval] = chordPhase;
                 }
+                 */
+                double phase = peak.phase;
 
                 // synth with phase accumulator
-                double phase = fmod(chordPhase, 2.0 * M_PI);
+                //double phase = fmod(chordPhase, 2.0 * M_PI);
                 const double dphi = 2.0 * M_PI * chordFreq / (double)sr;
+                for (int n = 0; n < frame_size; n++) {
+                    frame_signal[n] += (float)(amp * cos(phase));
+                    phase += dphi;
+                    if (phase >  M_PI) phase -= 2.0*M_PI;
+                    if (phase < -M_PI) phase += 2.0*M_PI;
+                }
 
+                /*
                 if (frame_size == LONG_SIZE) {
                     for (int n = 0; n < frame_size; n++) {
                         frame_signal[n] += (float)(amp * cos(phase));
@@ -577,6 +716,7 @@ int main(int argc, const char * argv[]) {
                         if (phase < -M_PI) phase += 2.0*M_PI;
                     }
                 }
+                */
             }
         }
 
